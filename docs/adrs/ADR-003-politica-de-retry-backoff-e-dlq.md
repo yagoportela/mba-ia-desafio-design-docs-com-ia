@@ -32,7 +32,7 @@ Diego mencionou que algumas pessoas defendem retry indefinido com backoff, mas d
 
 ### Registrar falha permanente na própria outbox, em vez de tabela separada
 
-Larissa perguntou se a DLQ deveria ser uma tabela separada ou apenas marcar como “failed” na própria outbox ([09:18] Larissa). Diego preferiu uma tabela `webhook_dead_letter` separada, com payload, motivo da falha e timestamp, para deixar a leitura da outbox principal mais limpa e servir como evidência para debug e reprocessamento ([09:18] Diego). A alternativa de marcar “failed” na outbox foi descartada por misturar o fluxo principal com o histórico de falhas permanentes.
+Larissa perguntou se a DLQ deveria ser uma tabela separada ou apenas marcar como “failed” na própria outbox ([09:17] Larissa). Diego preferiu uma tabela `webhook_dead_letter` separada, com payload, motivo da falha e timestamp, para deixar a leitura da outbox principal mais limpa e servir como evidência para debug e reprocessamento ([09:18] Diego). A alternativa de marcar “failed” na outbox foi descartada por misturar o fluxo principal com o histórico de falhas permanentes.
 
 ## Consequências
 

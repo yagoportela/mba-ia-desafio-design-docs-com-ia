@@ -12,7 +12,7 @@
 
 Atlas Comercial, MaxDistribuição e Nova Cargo são clientes B2B que hoje fazem polling no `GET /orders` para descobrir se o status dos pedidos mudou; a integração ficou lenta e cara para eles ([09:00] Marcos). Para esses clientes, qualquer latência abaixo de 10 segundos já é considerada “tempo real” ([09:02] Marcos). A Atlas sinalizou que pode migrar para o concorrente caso a entrega não ocorra até o fim do trimestre ([09:00] Marcos).
 
-A transação de mudança de status já é pesada: atualiza `orders`, insere em `order_status_history` e decrementa `stock_quantity` dos produtos do pedido ([09:04] Bruno). Um disparo HTTP síncrono dentro dessa transação faria um cliente lento bloquear a mudança de status de outros pedidos, e não é aceitável dar rollback na mudança de status caso o cliente esteja fora do ar ([09:04] Bruno; [09:05] Diego). A solução adotada é o padrão outbox: gravar o evento na `webhook_outbox` dentro da mesma transação SQL e deixar um worker separado disparar as chamadas HTTP ([09:06] Diego; [09:08] Larissa).
+A transação de mudança de status já é pesada: atualiza `orders`, insere em `order_status_history` e ajusta o `stockQuantity` dos produtos do pedido, debitando ou repondo conforme a transição ([09:04] Bruno). Um disparo HTTP síncrono dentro dessa transação faria um cliente lento bloquear a mudança de status de outros pedidos, e não é aceitável dar rollback na mudança de status caso o cliente esteja fora do ar ([09:04] Bruno; [09:05] Diego). A solução adotada é o padrão outbox: gravar o evento na `webhook_outbox` dentro da mesma transação SQL e deixar um worker separado disparar as chamadas HTTP ([09:06] Diego; [09:08] Larissa).
 
 Este FDD detalha a implementação das decisões registradas no [RFC](./RFC.md) e nos ADRs. O ponto de integração central é `OrderService.changeStatus` em `src/modules/orders/order.service.ts` (L126–179), que já abre `this.prisma.$transaction` (L131) e possui o tipo `TxClient = Prisma.TransactionClient` (L24). A API é inicializada por `src/server.ts`, e o projeto já expõe o factory `createPrismaClient()` em `src/config/database.ts` (L4–8).
 
@@ -314,7 +314,8 @@ sequenceDiagram
 {
   "customerId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   "url": "https://integracao.atlas.com.br/webhooks/orders",
-  "eventStatuses": ["PAID", "SHIPPED", "DELIVERED"]
+  "eventStatuses": ["PAID", "SHIPPED", "DELIVERED"],
+  "active": true
 }
 ```
 
@@ -536,6 +537,8 @@ Todos os códigos de domínio abaixo usam o prefixo `WEBHOOK_` ([09:29] Larissa)
 | `WEBHOOK_DEAD_LETTER_NOT_FOUND` | 404 | `WebhookDeadLetterNotFoundError extends AppError` | Replay de DLQ com id inexistente. |
 | `WEBHOOK_CUSTOMER_NOT_FOUND` | 404 | `WebhookCustomerNotFoundError extends AppError` | Criação ou listagem com `customerId` inexistente. |
 | `WEBHOOK_INVALID_STATUS` | 400 | `WebhookInvalidStatusError extends BadRequestError` | Lista de status contém valor fora do enum `OrderStatus`; a validação Zod também retorna `VALIDATION_ERROR`. |
+
+**Origem dos códigos:** `WEBHOOK_NOT_FOUND`, `WEBHOOK_INVALID_URL` e `WEBHOOK_SECRET_REQUIRED` foram citados como exemplos em [09:28] Bruno. `WEBHOOK_PAYLOAD_TOO_LARGE`, `WEBHOOK_DEAD_LETTER_NOT_FOUND`, `WEBHOOK_CUSTOMER_NOT_FOUND` e `WEBHOOK_INVALID_STATUS` são propostas deste FDD, derivadas dos requisitos de limite de payload, replay de DLQ, validação de customer e validação de status.
 
 **Observações:**
 

@@ -29,7 +29,7 @@ Os caminhos reais que materializam esses padrões são:
 
 ## Decisão
 
-Criar o módulo `src/modules/webhooks` com a mesma estrutura dos demais domínios: controller, service, repository, routes e schemas ([09:27] Bruno; [09:30] Larissa). A lógica de processamento do worker fica dentro desse módulo, em `webhook.worker.ts` ou `webhook.processor.ts`; o nome final será fechado no FDD/RFC ([09:28] Bruno).
+Criar o módulo `src/modules/webhooks` com a mesma estrutura dos demais domínios: controller, service, repository, routes e schemas ([09:27] Bruno; [09:30] Larissa). A lógica de processamento do worker fica dentro desse módulo, em `webhook.worker.ts` ou `webhook.processor.ts`; o nome final permanece em aberto e está registrado no RFC/FDD ([09:28] Bruno).
 
 Reutilizar os padrões existentes:
 

@@ -5,20 +5,20 @@
 | Campo | Valor |
 |---|---|
 | **Título** | Sistema de Webhooks de Notificação de Pedidos |
-| **Autor** | Diego — Tech Lead |
+| **Autor** | Diego — Engenheiro Sênior, time de Plataforma |
 | **Status** | Em Revisão |
 | **Data** | 2026-11-21 |
-| **Revisores** | Larissa (Tech Lead), Marcos (Product Manager), Sofia (Engenharia de Segurança), Bruno (Engenharia Pleno — Pedidos) e Diego (autor, Tech Lead) |
+| **Revisores** | Larissa (Tech Lead), Marcos (Product Manager), Sofia (Engenheira de Segurança) e Bruno (Engenheiro Pleno — Pedidos) |
 
 ## 2. Resumo Executivo (TL;DR)
 
-Propomos substituir o polling dos clientes B2B por webhooks outbound disparados a partir de um **outbox transacional no MySQL**. A mudança de status grava o evento na `webhook_outbox` dentro da mesma transação de `OrderService.changeStatus`; um **worker separado**, iniciado por `src/worker.ts` e executado via `npm run worker`, faz polling a cada 2 segundos e entrega os eventos. A segurança usa **HMAC-SHA256 com secret por endpoint e rotação com grace period de 24h**. A confiabilidade usa **entrega at-least-once com `X-Event-Id`**, retry em **5 tentativas com backoff de 1m/5m/30m/2h/12h** e DLQ em `webhook_dead_letter`, com replay manual restrito a `ADMIN`.
+Propomos substituir o polling dos clientes B2B por webhooks outbound disparados a partir de um **outbox transacional no MySQL**. A mudança de status grava o evento na `webhook_outbox` dentro da mesma transação de `OrderService.changeStatus`; um **worker separado**, com novo entry point `src/worker.ts` (a criar) e script `npm run worker` (a criar), faz polling a cada 2 segundos e entrega os eventos. A segurança usa **HMAC-SHA256 com secret por endpoint e rotação com grace period de 24h**. A confiabilidade usa **entrega at-least-once com `X-Event-Id`**, retry em **5 tentativas com backoff de 1m/5m/30m/2h/12h** e DLQ em `webhook_dead_letter`, com replay manual restrito a `ADMIN`.
 
 ## 3. Contexto e Problema
 
 Atlas Comercial, MaxDistribuição e Nova Cargo são clientes B2B que hoje fazem polling no `GET /orders` para descobrir se o status dos pedidos mudou; a integração ficou lenta e cara para eles ([09:00] Marcos). Para esses clientes, qualquer latência abaixo de 10 segundos já é considerada “tempo real” ([09:02] Marcos). A Atlas sinalizou que pode migrar para o concorrente caso a entrega não ocorra até o fim do trimestre ([09:00] Marcos).
 
-A alternativa de disparar o webhook sincronamente dentro do service de pedidos foi descartada: a transação de `changeStatus` já é pesada, pois atualiza `orders`, insere em `order_status_history` e decrementa `stock_quantity` dos produtos ([09:04] Bruno). Um HTTP call no meio dessa transação faria qualquer cliente lento travar a mudança de status de outros pedidos ([09:04] Bruno). Além disso, se o cliente estiver fora do ar, não é aceitável dar rollback na mudança de status ([09:04] Bruno; [09:05] Diego).
+A alternativa de disparar o webhook sincronamente dentro do service de pedidos foi descartada: a transação de `changeStatus` já é pesada, pois atualiza `orders`, insere em `order_status_history` e ajusta o `stockQuantity` dos produtos, debitando ou repondo conforme a transição ([09:04] Bruno). Um HTTP call no meio dessa transação faria qualquer cliente lento travar a mudança de status de outros pedidos ([09:04] Bruno). Além disso, se o cliente estiver fora do ar, não é aceitável dar rollback na mudança de status ([09:04] Bruno; [09:05] Diego).
 
 No código atual, `OrderService.changeStatus` em `src/modules/orders/order.service.ts` (L126–179) concentra a transação que precisa ser estendida. A API é inicializada por `src/server.ts`, e o projeto já possui o factory `createPrismaClient()` em `src/config/database.ts` (L4–8).
 
@@ -29,9 +29,9 @@ No código atual, `OrderService.changeStatus` em `src/modules/orders/order.servi
 A solução tem dois componentes de runtime:
 
 - **API HTTP**, inicializada por `src/server.ts`, que atende o fluxo normal de pedidos. A gravação do evento ocorre dentro da transação de `OrderService.changeStatus`, em `src/modules/orders/order.service.ts`, e não em uma chamada HTTP externa.
-- **Worker separado**, com entry point `src/worker.ts` e script `npm run worker`, que roda em outro processo Node, conecta-se ao mesmo MySQL e usa uma instância própria de `PrismaClient`, pois o cliente Prisma é por processo ([09:11] Diego; [09:30] Bruno). O worker faz polling a cada 2 segundos ([09:09] Diego; [09:10] Larissa).
+- **Worker separado**, com entry point `src/worker.ts` (a criar) e script `npm run worker` (a criar), que roda em outro processo Node, conecta-se ao mesmo MySQL e usa uma instância própria de `PrismaClient`, pois o cliente Prisma é por processo ([09:11] Diego; [09:30] Bruno). O worker faz polling a cada 2 segundos ([09:09] Diego; [09:10] Larissa).
 
-O módulo de webhooks segue o padrão existente de `src/modules`: controller, service, repository, routes e schemas ([09:27] Bruno). A lógica de processamento fica dentro do módulo, em `webhook.worker.ts` ou `webhook.processor.ts`; o nome final será fechado no FDD ([09:28] Bruno).
+O novo módulo `src/modules/webhooks` (a criar) segue o padrão existente de `src/modules`: controller, service, repository, routes e schemas ([09:27] Bruno). A lógica de processamento fica dentro do módulo, em `webhook.worker.ts` ou `webhook.processor.ts`; o nome final permanece em aberto e está registrado na seção 6 ([09:28] Bruno).
 
 ### 4.2 Fluxo de uma mudança de status
 
@@ -54,7 +54,7 @@ O módulo de webhooks segue o padrão existente de `src/modules`: controller, se
 
 - **Single-worker e ordering:** com um único worker, os eventos são processados na ordem de `created_at` da outbox, o que garante ordering apenas por `order_id`; não há garantia de ordering global ([09:12] Diego; [09:13] Larissa). Múltiplos workers, particionamento por `order_id` e lock pessimista ficam para o futuro ([09:13] Diego).
 - **Sem arquivamento automatizado:** o arquivamento de linhas entregues após 30 dias está explicitamente fora do escopo desta feature ([09:08] Diego). A outbox cresce enquanto essa rotina não existir.
-- **Itens fora desta fase:** email de alerta, dashboard visual e rate limiting de envio não entram nesta entrega; rate limiting fica como ponto em aberto ([09:37] Larissa; [09:39] Larissa; [09:40] Larissa).
+- **Itens fora desta fase:** email de alerta, dashboard visual e rate limiting de envio não entram nesta entrega; rate limiting fica como ponto em aberto ([09:37] Larissa; [09:38] Diego; [09:39] Larissa; [09:40] Larissa).
 
 ## 5. Alternativas Consideradas
 

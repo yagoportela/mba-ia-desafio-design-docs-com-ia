@@ -12,11 +12,11 @@ Cada endpoint de webhook do cliente deve ter uma secret única, não uma secret 
 
 Além disso, TLS é obrigatório: a URL do webhook tem que ser `https`; se o cliente cadastrar `http`, a plataforma recusa com erro de validação ([09:23] Sofia). Sofia classificou isso como validação no schema Zod, não como decisão arquitetural separada ([09:23] Sofia).
 
-No código, o padrão de validação Zod está em `src/middlewares/validate.middleware.ts` (L11–37): o middleware converte `ZodError` em `ValidationError` (L25–32). A classe `ValidationError` está em `src/shared/errors/http-errors.ts` (L9–13). Um exemplo de schema Zod do domínio está em `src/modules/orders/order.schemas.ts` (L4–30). O `prisma/schema.prisma` ainda não tem modelo de configuração de webhook; a tabela precisará armazenar `url`, `secret`, `customer_id` e estado ativo ([09:21] Bruno; [09:21] Sofia).
+No código, o padrão de validação Zod está em `src/middlewares/validate.middleware.ts` (L11–37): o middleware converte `ZodError` em `ValidationError` (L25–32). A classe `ValidationError` está em `src/shared/errors/http-errors.ts` (L9–13). Um exemplo de schema Zod do domínio está em `src/modules/orders/order.schemas.ts` (L4–30). O `prisma/schema.prisma` ainda não tem modelo de configuração de webhook; a tabela precisará armazenar `url`, `secret`, `customerId` e estado ativo ([09:21] Bruno; [09:21] Sofia).
 
 ## Decisão
 
-Adotar HMAC-SHA256 sobre o corpo do request, com assinatura enviada no header `X-Signature` ([09:20] Sofia; [09:22] Sofia). Cada endpoint de webhook tem uma secret única, gerada pela plataforma e devolvida na criação ([09:21] Sofia; [09:31] Marcos). A secret é rotacionável por endpoint: o cliente pode pedir uma nova secret pela API; a antiga permanece válida por 24 horas em paralelo e depois morre ([09:21] Sofia). A tabela de configuração armazena `url`, `secret`, `customer_id` e estado ativo ([09:21] Bruno; [09:21] Sofia).
+Adotar HMAC-SHA256 sobre o corpo do request, com assinatura enviada no header `X-Signature` ([09:20] Sofia; [09:22] Sofia). Cada endpoint de webhook tem uma secret única, gerada pela plataforma e devolvida na criação ([09:21] Sofia; [09:31] Marcos). A secret é rotacionável por endpoint: o cliente pode pedir uma nova secret pela API; a antiga permanece válida por 24 horas em paralelo e depois morre ([09:21] Sofia). A tabela de configuração armazena `url`, `secret`, `customerId` e estado ativo ([09:21] Bruno; [09:21] Sofia).
 
 A URL do webhook deve ser `https`; URLs `http` são recusadas com erro de validação no schema Zod ([09:23] Sofia). A validação deve reutilizar o middleware `validate` existente e o padrão de schemas Zod do projeto (`src/middlewares/validate.middleware.ts`, L11–37; `src/modules/orders/order.schemas.ts`, L4–30).
 

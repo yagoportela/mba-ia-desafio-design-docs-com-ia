@@ -44,7 +44,7 @@ A motivação desta feature é, portanto, atender ao pedido dos três clientes B
 
 ### 2.3 Por que a notificação precisa ser assíncrona
 
-A transação de mudança de status já é pesada: atualiza `orders`, insere em `order_status_history` e ajusta o `stock_quantity` dos produtos do pedido ([09:04] Bruno). Um disparo HTTP síncrono dentro dessa transação faria **qualquer cliente lento travar a mudança de status de outros pedidos**; além disso, se o cliente estivesse fora do ar, não seria aceitável dar rollback na mudança de status ([09:04] Bruno; [09:05] Diego).
+A transação de mudança de status já é pesada: atualiza `orders`, insere em `order_status_history` e ajusta o `stockQuantity` dos produtos do pedido, debitando ou repondo conforme a transição ([09:04] Bruno). Um disparo HTTP síncrono dentro dessa transação faria **qualquer cliente lento travar a mudança de status de outros pedidos**; além disso, se o cliente estivesse fora do ar, não seria aceitável dar rollback na mudança de status ([09:04] Bruno; [09:05] Diego).
 
 Por isso, a solução adotada é o padrão **outbox transacional no MySQL**: o evento é gravado na mesma transação da mudança de status e um worker separado dispara as chamadas HTTP ([09:06] Diego; [09:08] Larissa). O detalhamento da decisão está no [ADR-001](./adrs/ADR-001-outbox-transacional-no-mysql.md).
 
@@ -60,7 +60,7 @@ A feature é destinada a **sistemas**, não a consumidores finais. Os três púb
 | **Operador / usuário autenticado** | Gerenciar os endpoints de webhook do cliente. | Cadastrar endpoint HTTPS com a lista de status desejados; listar, editar e remover webhooks; rotacionar a secret do endpoint. Qualquer role autenticada pode operar o CRUD nesta fase. | [09:21] Sofia; [09:31] Marcos; [09:33] Bruno; [09:36] Marcos; [09:37] Sofia |
 | **Administrador (`ADMIN`)** | Inspecionar entregas e recuperar eventos de falha permanente. | Consultar o histórico de entregas para investigar falhas; executar replay manual de um evento na DLQ. O replay é restrito a `ADMIN` e deve registrar quem o executou. | [09:34] Marcos; [09:35] Diego; [09:36] Sofia |
 
-A autenticação é feita com JWT do sistema. Existem usuários que representam o cliente e usam a API diretamente; o `customer_id` identifica o customer no body ou no path, não no JWT ([09:32] Marcos; [09:32] Larissa).
+A autenticação é feita com JWT do sistema. Existem usuários que representam o cliente e usam a API diretamente; o `customerId` identifica o customer no body, na query ou no path, conforme o endpoint, e não vem do JWT ([09:32] Marcos; [09:32] Larissa).
 
 ### 3.1 Cenário ponta a ponta
 
@@ -101,7 +101,7 @@ Entregar a capacidade de webhooks outbound para os três clientes B2B dentro da 
 - **Webhooks outbound** de mudança de status de pedidos para clientes B2B, com `event_type = order.status_changed` ([09:00] Marcos; [09:43] Diego).
 - **CRUD autenticado de endpoints**: cadastro via `POST`, listagem via `GET`, edição via `PATCH` e remoção via `DELETE` ([09:31] Marcos; [09:33] Bruno).
 - **Filtro de status por webhook**: cada endpoint escolhe quais status deseja receber; o filtro é aplicado na inserção do evento na outbox ([09:33] Marcos; [09:34] Bruno).
-- **Estado ativo** do webhook e associação ao `customer_id` informado no body ou no path, não derivado do JWT ([09:21] Bruno; [09:21] Sofia; [09:32] Larissa).
+- **Estado ativo** do webhook e associação ao `customerId` informado no body, na query ou no path, não derivado do JWT ([09:21] Bruno; [09:21] Sofia; [09:32] Larissa).
 - **Secret única por endpoint**, gerada pela plataforma e devolvida na criação ([09:21] Sofia; [09:31] Marcos).
 - **Rotação de secret** via API, com a secret anterior válida por **24 horas** em paralelo e depois expirada ([09:21] Sofia).
 - **Assinatura HMAC-SHA256** sobre o corpo do request, enviada no header `X-Signature` ([09:20] Sofia; [09:22] Sofia).
@@ -137,8 +137,8 @@ Entregar a capacidade de webhooks outbound para os três clientes B2B dentro da 
 | ID | Requisito | Fonte |
 |---|---|---|
 | **PRD-FR-01** | Notificar clientes B2B, por webhook outbound, quando o status de um pedido mudar, usando `event_type = order.status_changed`. | [09:00] Marcos; [09:43] Diego |
-| **PRD-FR-02** | Exigir autenticação JWT em todas as operações de configuração. O CRUD de webhooks pode ser usado por qualquer role autenticada nesta fase. O `customer_id` deve ser informado no body ou no path; ele não é derivado do JWT, pois o JWT atual representa o operador e não o cliente. | [09:31] Marcos; [09:32] Larissa; [09:36] Marcos; [09:37] Sofia |
-| **PRD-FR-03** | Permitir o cadastro de webhook via `POST`, com URL, lista de status de interesse e estado ativo. A plataforma gera a secret e a devolve na criação. | [09:31] Marcos; [09:21] Sofia |
+| **PRD-FR-02** | Exigir autenticação JWT em todas as operações de configuração. O CRUD de webhooks pode ser usado por qualquer role autenticada nesta fase. O `customerId` deve ser informado no body, na query ou no path, conforme o endpoint; ele não é derivado do JWT, pois o JWT atual representa o operador e não o cliente. | [09:31] Marcos; [09:32] Larissa; [09:36] Marcos; [09:37] Sofia |
+| **PRD-FR-03** | Permitir o cadastro de webhook via `POST`, com URL, lista de status de interesse e estado ativo (default `true`). A plataforma gera a secret e a devolve na criação. | [09:31] Marcos; [09:21] Sofia |
 | **PRD-FR-04** | Permitir a listagem dos webhooks de um customer via `GET`. | [09:33] Bruno |
 | **PRD-FR-05** | Permitir a edição de um webhook via `PATCH`, incluindo URL, lista de status e estado ativo. | [09:33] Bruno; [09:21] Bruno |
 | **PRD-FR-06** | Permitir a remoção de um webhook via `DELETE`. | [09:33] Bruno |
@@ -204,7 +204,7 @@ As decisões abaixo foram fechadas na reunião e detalhadas nos ADRs. O PRD regi
 |---|---|---|
 | **Módulo de pedidos — `OrderService.changeStatus`** (`src/modules/orders/order.service.ts`) | Ponto de integração transacional para publicar o evento na outbox. A mudança de status já atualiza `orders`, insere em `order_status_history` e ajusta estoque. | [09:04] Bruno; [09:40] Bruno; [09:41] Bruno |
 | **Banco MySQL existente** (`src/config/database.ts`; `prisma/schema.prisma`) | Persistência da configuração, da outbox, da DLQ e do histórico de entregas. A decisão é não introduzir nova infraestrutura. | [09:06] Diego; [09:07] Diego |
-| **Autenticação JWT e middleware `requireRole`** (`src/middlewares/auth.middleware.ts`; exemplo de uso em `src/modules/users/user.routes.ts`) | Autenticar o CRUD de webhooks e restringir o replay de DLQ a `ADMIN`. O JWT atual não contém `customerId`; por isso o `customer_id` vai no body ou no path. | [09:32] Larissa; [09:36] Larissa; [09:36] Sofia |
+| **Autenticação JWT e middleware `requireRole`** (`src/middlewares/auth.middleware.ts`; exemplo de uso em `src/modules/users/user.routes.ts`) | Autenticar o CRUD de webhooks e restringir o replay de DLQ a `ADMIN`. O JWT atual não contém `customerId`; por isso o `customerId` vai no body, na query ou no path, conforme o endpoint. | [09:32] Larissa; [09:36] Larissa; [09:36] Sofia |
 | **Logger Pino e error middleware** (`src/shared/logger/index.ts`; `src/middlewares/error.middleware.ts`; `src/shared/errors/app-error.ts`) | Logs estruturados da API e do worker, tratamento centralizado de erros e auditoria do replay. Não será introduzido um novo logger. | [09:29] Bruno; [09:30] Larissa; [09:36] Sofia |
 | **Validação Zod** (`src/middlewares/validate.middleware.ts`) | Validar URL HTTPS, lista de status, parâmetros e body dos endpoints, seguindo o padrão existente. | [09:23] Sofia; [09:30] Larissa |
 | **Novo processo do worker** (`src/worker.ts` e script `npm run worker`, a criar; padrão de bootstrap e shutdown de `src/server.ts`) | Executar o polling e as entregas em processo separado da API, com ciclo de vida próprio. | [09:11] Diego; [09:11] Larissa; [09:30] Bruno |
@@ -238,7 +238,7 @@ Os critérios abaixo derivam dos requisitos funcionais, dos requisitos não func
 |---|---|---|
 | **PRD-AC-01** | Um cliente com webhook ativo recebe o evento `order.status_changed` em menos de 10 segundos após a mudança de status. | Teste ponta a ponta com mudança de status e endpoint de teste. |
 | **PRD-AC-02** | Nenhum evento é gerado quando nenhum webhook ativo do customer quer o novo status. | Teste com filtro de status que exclui o status alterado. |
-| **PRD-AC-03** | Um usuário autenticado consegue cadastrar, listar, editar e remover webhooks de um customer, informando o `customer_id` no body ou no path. | Testes de API com JWT válido e sem JWT. |
+| **PRD-AC-03** | Um usuário autenticado consegue cadastrar, listar, editar e remover webhooks de um customer, informando o `customerId` no body, na query ou no path, conforme o endpoint. | Testes de API com JWT válido e sem JWT. |
 | **PRD-AC-04** | A secret é gerada pela plataforma e devolvida na criação; a rotação mantém a secret anterior válida por 24 horas em paralelo. | Teste de criação e rotação com verificação das duas secrets. |
 | **PRD-AC-05** | O request outbound contém `X-Event-Id`, `X-Signature`, `X-Timestamp`, `X-Webhook-Id` e `Content-Type: application/json`; a assinatura HMAC-SHA256 é válida com a secret do endpoint. | Teste de contrato do request outbound. |
 | **PRD-AC-06** | O payload é um snapshot da transição, não inclui `items` e contém os campos acordados; `GET /orders/:id` continua disponível para detalhes. | Inspeção do payload recebido e consulta ao pedido. |
@@ -262,7 +262,7 @@ A validação combina testes automatizados, testes de contrato e aceitação de 
 
 | Frente | O que validar | Critérios cobertos |
 |---|---|---|
-| **API e autorização** | CRUD autenticado, `customer_id` no body/path, listagem, edição, remoção, estado ativo e recusa de acesso sem JWT. | PRD-AC-03 |
+| **API e autorização** | CRUD autenticado, `customerId` no body/query/path, listagem, edição, remoção, estado ativo e recusa de acesso sem JWT. | PRD-AC-03 |
 | **Fluxo ponta a ponta** | Cadastro do webhook, mudança de status no OMS, registro do evento e entrega ao endpoint em menos de 10 segundos. | PRD-AC-01 |
 | **Contrato outbound** | Headers, assinatura HMAC-SHA256, `Content-Type`, payload snapshot, ausência de `items` e consulta a `GET /orders/:id`. | PRD-AC-05; PRD-AC-06 |
 | **Filtro de status** | Evento não é gerado quando nenhum webhook ativo do customer quer o status; evento é gerado quando ao menos um quer. | PRD-AC-02 |
